@@ -184,10 +184,10 @@
     <div class="field"><label>Restaurant / Lokal <span style="color:#e05a5a">*</span></label><input id="f-restaurant" type="text" placeholder="Name des Restaurants"></div>
     <div class="field"><label>Adresse des Restaurants</label><input id="f-adresse" type="text" placeholder="Straße, PLZ, Ort"></div>
     <div class="row2">
-      <div class="field"><label>Gesamtbetrag (€) <span style="color:#e05a5a">*</span></label><input id="f-betrag" type="text" placeholder="z. B. 47,50"></div>
-      <div class="field"><label>Trinkgeld (€)</label><input id="f-trinkgeld" type="text" placeholder="optional" oninput="toggleTrinkgeld()"></div>
+      <div class="field"><label>Rechnungsbetrag o. Trinkgeld (€) <span style="color:#e05a5a">*</span></label><input id="f-betrag" type="text" inputmode="decimal" placeholder="z. B. 47,50" oninput="recalcGesamt()"></div>
+      <div class="field"><label>Trinkgeld (€)</label><input id="f-trinkgeld" type="text" inputmode="decimal" placeholder="optional" oninput="recalcGesamt()"></div>
     </div>
-    <div class="field trinkgeld-row" id="trinkgeld-row"><label>Summe inkl. Trinkgeld (€)</label><input id="f-gesamt" type="text" placeholder="Gesamt inkl. Trinkgeld"></div>
+    <div class="field trinkgeld-row" id="trinkgeld-row"><label>Summe inkl. Trinkgeld (€) · automatisch</label><input id="f-gesamt" type="text" readonly style="background:#eef5fa;color:#1a2a3a;font-weight:600;" placeholder="wird berechnet"></div>
 
     <div class="section-label">Teilnehmer</div>
     <div class="field"><label>Bewirtende Person <span style="color:#e05a5a">*</span></label><input id="f-bewirter" type="text" value="Jens Bracht"></div>
@@ -285,7 +285,7 @@ async function extractReceipt(dataURL) {
       system: 'Du bist ein Spezialist für das Auslesen von deutschen Restaurantbelegen. Antworte NUR mit einem JSON-Objekt, ohne Markdown, ohne Backticks.',
       messages: [{ role: 'user', content: [
         { type: 'image', source: { type: 'base64', media_type: mediaType, data: base64 } },
-        { type: 'text', text: 'Lese diesen Restaurantbeleg aus und gib folgendes JSON zurück:\n{\n  "datum": "TT.MM.JJJJ oder leer",\n  "restaurant_name": "Name oder leer",\n  "restaurant_adresse": "Adresse oder leer",\n  "gesamtbetrag": "Betrag z.B. 47,50 oder leer",\n  "trinkgeld": "Trinkgeld falls sichtbar oder leer",\n  "gesamtbetrag_mit_trinkgeld": "Summe inkl. Trinkgeld oder gleich gesamtbetrag"\n}\nNur JSON.' }
+        { type: 'text', text: 'Lese diesen Restaurantbeleg aus. WICHTIG zur Betrags-Logik:\n- "gesamtbetrag" = reiner Rechnungsbetrag fuer Speisen/Getraenke OHNE Trinkgeld.\n- "trinkgeld" = nur ausfuellen, wenn es klar getrennt ausgewiesen ist (eigene Zeile Trinkgeld/Tip). Sonst leer.\n- Wenn nur EINE Summe auf dem Bon steht und unklar ist, ob Trinkgeld enthalten ist: diese Summe in "gesamtbetrag", "trinkgeld" leer lassen. NICHT raten.\n- "gesamtbetrag_mit_trinkgeld" immer leer lassen, wird automatisch berechnet.\nGib NUR dieses JSON zurueck:\n{\n  "datum": "TT.MM.JJJJ oder leer",\n  "restaurant_name": "Name oder leer",\n  "restaurant_adresse": "Adresse oder leer",\n  "gesamtbetrag": "reiner Rechnungsbetrag ohne Trinkgeld, z.B. 47,50 oder leer",\n  "trinkgeld": "nur wenn klar getrennt ausgewiesen, sonst leer",\n  "gesamtbetrag_mit_trinkgeld": ""\n}\nNur JSON.' }
       ]}]
     })
   });
@@ -308,12 +308,30 @@ function fillForm(d) {
   if (d.restaurant_name) document.getElementById('f-restaurant').value = d.restaurant_name;
   if (d.restaurant_adresse) document.getElementById('f-adresse').value = d.restaurant_adresse;
   if (d.gesamtbetrag) document.getElementById('f-betrag').value = d.gesamtbetrag;
-  if (d.trinkgeld) { document.getElementById('f-trinkgeld').value = d.trinkgeld; toggleTrinkgeld(); }
-  if (d.gesamtbetrag_mit_trinkgeld) document.getElementById('f-gesamt').value = d.gesamtbetrag_mit_trinkgeld;
+  if (d.trinkgeld) document.getElementById('f-trinkgeld').value = d.trinkgeld;
+  recalcGesamt();
 }
 
-function toggleTrinkgeld() {
-  document.getElementById('trinkgeld-row').style.display = document.getElementById('f-trinkgeld').value.trim() ? 'flex' : 'none';
+// Parst Beträge wie "47,50" oder "47.50" zu Number
+function parseBetrag(s) {
+  if (!s) return NaN;
+  return parseFloat(String(s).replace(/[^0-9,.]/g, '').replace(',', '.'));
+}
+
+// Summe inkl. Trinkgeld = Rechnungsbetrag + Trinkgeld (automatisch)
+function recalcGesamt() {
+  const betrag = parseBetrag(document.getElementById('f-betrag').value);
+  const tg = parseBetrag(document.getElementById('f-trinkgeld').value);
+  const row = document.getElementById('trinkgeld-row');
+  const out = document.getElementById('f-gesamt');
+  if (!isNaN(tg) && tg > 0 && !isNaN(betrag)) {
+    const sum = betrag + tg;
+    out.value = sum.toFixed(2).replace('.', ',');
+    row.style.display = 'flex';
+  } else {
+    out.value = '';
+    row.style.display = 'none';
+  }
 }
 
 // Signature
@@ -391,8 +409,8 @@ async function generatePDF() {
     row('Datum der Bewirtung', datum);
     row('Name des Restaurants', restaurant);
     row('Adresse des Restaurants', adresse);
-    row('Gesamtbetrag (brutto)', betrag ? betrag + ' €' : '');
-    if (trinkgeld) { row('Trinkgeld', trinkgeld + ' €'); row('Summe inkl. Trinkgeld', gesamt ? gesamt + ' €' : '', true); }
+    row('Rechnungsbetrag (brutto)', betrag ? betrag + ' €' : '');
+    if (trinkgeld) { row('Trinkgeld', trinkgeld + ' €'); row('Gesamtsumme', gesamt ? gesamt + ' €' : '', true); }
     y += 3; divider();
     secLabel('TEILNEHMER');
     row('Bewirtende Person', bewirter);
